@@ -3,6 +3,9 @@
 Visual Studio Codeで小説を執筆するための機能拡張です。
 
 - [novel-writer公式サイト](https://taiyolab.com/ja/novel-writer/)
+- [必須ライブラリ](#debendency)
+    - node.js
+    - vivliostyle/cli
 - [エディター機能拡張](#editor)
 - [サイドパネル・ステータスバー機能拡張](#side-panel)
     - [原稿ツリー編集](#原稿ツリー編集)
@@ -21,6 +24,16 @@ Visual Studio Codeで小説を執筆するための機能拡張です。
 GitHubスポンサー
 novel-writerの開発は[こちらの方々](#sponsors)に応援いただいています。
 
+## Dependency
+
+novel-writerでPDFの保存を行うにはnode.jsとVivliostyle/Cliが必要です。
+node.jsは[node.js公式サイト](https://nodejs.org/en)からインストールしてください。
+
+node.jsをインストールしたら、Vivliostyle/Cliを以下のコマンドでインストールしてください。
+
+```
+% npm install -g @vivliostyle/cli
+```
 
 ## Editor
 
