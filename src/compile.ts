@@ -16,7 +16,7 @@ export default function compileDocs(): void {
         path.basename(deadLineFolderPath());
   const projectPath = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
   const config = getConfig();
-  const separatorString = "\n　　　" + config.separator + "\n\n";
+  const separatorString = config.enableSeparator ? "\n　　　" + config.separator + "\n\n" : "";
   const draftRootPath =
     deadLineFolderPath() == "" ? draftRoot() : deadLineFolderPath();
 
