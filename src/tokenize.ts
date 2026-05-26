@@ -698,10 +698,7 @@ export async function addRuby() {
     if (ruby == "") return;
     if (ruby == undefined) return;
     const replaceRange = new Range(selection.start, selection.end);
-    const rubyString = baseString.match(/^([一-鿏々-〇]+?)$/)
-      ? `${baseString}《${ruby}》`
-      : `｜${baseString}《${ruby}》`;
-    changeText(replaceRange, rubyString);
+    changeText(replaceRange, `｜${baseString}《${ruby}》`);
 
     return;
   }
@@ -744,10 +741,7 @@ export async function addRuby() {
   );
   const replaceRange = new Range(replaceStart, replaceEnd);
 
-  const rubyString = baseString.match(/^([一-鿏々-〇]+?)$/)
-    ? `${baseString}《${ruby}》`
-    : `｜${baseString}《${ruby}》`;
-  changeText(replaceRange, rubyString);
+  changeText(replaceRange, `｜${baseString}《${ruby}》`);
 
   return;
 }
