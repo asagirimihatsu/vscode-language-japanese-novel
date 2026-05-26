@@ -1,37 +1,32 @@
-//Original code is published by 8amjp/vsce-charactercount] https://github.com/8amjp/vsce-charactercount under MIT
+// Original code is published by 8amjp/vsce-charactercount https://github.com/8amjp/vsce-charactercount under MIT
 
-"use strict";
-import * as path from "path";
-import * as fs from "fs";
+import * as path from "node:path";
 import {
+  manuscriptRoot,
   draftsObject,
+  getLength,
   ifFileInDraft,
   resetCounter,
   totalLength,
-  draftRoot,
-  getLength,
-} from "./compile";
+} from "./compile.js";
 import TreeModel from "tree-model";
 
 import {
-  window,
+  type Disposable as DisposableType,
   Disposable,
   StatusBarAlignment,
-  StatusBarItem,
-  TextDocument,
+  type StatusBarItem,
+  type TextDocument,
+  window,
   workspace,
 } from "vscode";
 import * as vscode from "vscode";
 
-import { SimpleGit, simpleGit, SimpleGitOptions } from "simple-git";
+import { simpleGit, type SimpleGitOptions } from "simple-git";
 import { distance } from "fastest-levenshtein";
-import { getConfig } from "./config";
-import { get } from "http";
-import { escape } from "querystring";
+import { getConfig } from "./config.js";
 
-import { count } from "console";
-
-let projectDraftLengthObj = { lengthInNumber: 0, lengthInSheet: 0 };
+const projectDraftLengthObj = { lengthInNumber: 0, lengthInSheet: 0 };
 let countingFolderPath = "";
 let countingTarget = "";
 const TOTAL_PROGRESS_BASELINE_V2_KEY = "totalProgressBaselineV2";
@@ -49,19 +44,22 @@ type TotalProgressBaselineV2 = {
   date: string;
 };
 
-if (draftRoot() != "") {
-  projectDraftLengthObj.lengthInNumber =
-    totalLength(draftRoot()).lengthInNumber;
-  projectDraftLengthObj.lengthInSheet = totalLength(draftRoot()).lengthInSheet;
-  console.log("プロジェクト総文字数", projectDraftLengthObj);
-}
-
 export function deadLineFolderPath(): string {
   return countingFolderPath;
 }
 
 export function deadLineTextCount(): string {
   return countingTarget;
+}
+
+async function pathExists(fsPath: string): Promise<boolean> {
+  if (!fsPath) return false;
+  try {
+    await vscode.workspace.fs.stat(vscode.Uri.file(fsPath));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export class CharacterCounter {
@@ -72,8 +70,8 @@ export class CharacterCounter {
     label: "",
     amountLength: { lengthInNumber: 0, lengthInSheet: 0 },
   };
-  public totalCountPrevious = totalLength(draftRoot()).lengthInNumber;
-  public totalSheetCountPrevious = totalLength(draftRoot()).lengthInSheet;
+  public totalCountPrevious = 0;
+  public totalSheetCountPrevious = 0;
   public writingDate = new Date();
   public deadlineCountPrevious = 0;
   public totalCountPreviousDate = new Date();
@@ -89,22 +87,31 @@ export class CharacterCounter {
   constructor(private readonly context?: vscode.ExtensionContext) {
     if (context) {
       this.workspaceState = context.workspaceState;
-      const currentTotal = totalLength(draftRoot());
-      this.totalCountPrevious = currentTotal.lengthInNumber;
-      this.totalSheetCountPrevious = currentTotal.lengthInSheet;
-      console.log("文字数カウンター初期化", totalLength(draftRoot()));
+    }
+  }
 
-      //テスト用
+  public async initialize(): Promise<void> {
+    const root = await manuscriptRoot();
+    if (root !== "") {
+      const total = await totalLength(root);
+      projectDraftLengthObj.lengthInNumber = total.lengthInNumber;
+      projectDraftLengthObj.lengthInSheet = total.lengthInSheet;
+      console.log("プロジェクト総文字数", projectDraftLengthObj);
+
+      this.totalCountPrevious = total.lengthInNumber;
+      this.totalSheetCountPrevious = total.lengthInSheet;
+      console.log("文字数カウンター初期化", total);
+
       const ifTest = false;
-      if (ifTest) {
-        context.workspaceState.update(LEGACY_TOTAL_COUNT_PREVIOUS_KEY, undefined);
-        context.workspaceState.update(
+      if (ifTest && this.context) {
+        this.context.workspaceState.update(LEGACY_TOTAL_COUNT_PREVIOUS_KEY, undefined);
+        this.context.workspaceState.update(
           LEGACY_TOTAL_COUNT_PREVIOUS_DATE_KEY,
           undefined,
         );
-        context.workspaceState.update(TOTAL_PROGRESS_BASELINE_V2_KEY, undefined);
+        this.context.workspaceState.update(TOTAL_PROGRESS_BASELINE_V2_KEY, undefined);
       }
-      this._initializeProgressBaseline(currentTotal);
+      this._initializeProgressBaseline(total);
     }
   }
 
@@ -145,7 +152,6 @@ export class CharacterCounter {
     };
     this.workspaceState?.update(TOTAL_PROGRESS_BASELINE_V2_KEY, baseline);
 
-    // 旧キーも残して、既存利用環境との互換性を維持する
     this.workspaceState?.update(LEGACY_TOTAL_COUNT_PREVIOUS_KEY, total.lengthInNumber);
     this.workspaceState?.update(
       LEGACY_TOTAL_COUNT_PREVIOUS_DATE_KEY,
@@ -174,7 +180,6 @@ export class CharacterCounter {
 
     if (typeof storedLegacyCount === "number") {
       this.totalCountPrevious = storedLegacyCount;
-      // 旧フォーマットには枚数がないため、400字換算で移行する
       this.totalSheetCountPrevious = storedLegacyCount / 400;
       this.totalCountPreviousDate = this._coerceDate(storedLegacyDate, yesterday);
       this._saveProgressBaseline(
@@ -194,7 +199,7 @@ export class CharacterCounter {
     this._saveProgressBaseline(currentTotal, yesterday);
   }
 
-  public updateCharacterCount(): void {
+  public async updateCharacterCount(): Promise<void> {
     if (!this._statusBarItem) {
       this._statusBarItem = window.createStatusBarItem(StatusBarAlignment.Left);
     }
@@ -222,29 +227,23 @@ export class CharacterCounter {
     let savedCount = 0;
     let savedSheetCount = 0;
 
-    // path.relative関数でbasePathからsubPathの相対パスを取得
-    const relativePath = path.relative(draftRoot(), docPath);
-    if (!draftRoot()) {
+    const root = await manuscriptRoot();
+    const relativePath = path.relative(root, docPath);
+    if (!root) {
       // プロジェクトフォルダが設定されていない場合
-      // 何も行わない
     } else if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-      // 相対パスが'.'で始まっていない場合、プロジェクト外部のファイルだとみなします
       savedCount = activeCount;
       savedSheetCount = activeheetCount;
     } else {
-      // プロジェクト内部のファイルの場合
-      const lengthOfFile = this._lengthByPath(docPath);
+      const lengthOfFile = await this._lengthByPath(docPath);
       savedCount = lengthOfFile.lengthInNumber;
       savedSheetCount = lengthOfFile.lengthInSheet;
     }
 
-    // 合計の計算
-    // activeファイルが原稿フォルダにあるかどうか
-    const ifActiveDocInDraft = ifFileInDraft(
+    const ifActiveDocInDraft = await ifFileInDraft(
       window.activeTextEditor?.document.uri.fsPath,
     );
 
-    // 総数の計算 アクティブドキュメントを開いているときは、保存された文字数を引く
     const totalCount = ifActiveDocInDraft
       ? projectDraftLengthObj.lengthInNumber - savedCount + activeCount
       : projectDraftLengthObj.lengthInNumber;
@@ -254,13 +253,10 @@ export class CharacterCounter {
 
     let editDistance = "";
     let writingProgressString = "";
-    //  MARK: 出力部分
     if (this.ifEditDistance && getConfig().displayEditDistance) {
-      // 増減分のプラス記号、±記号を定義
       let progressIndex = this.writingProgress > 0 ? "+" : "";
       progressIndex = this.writingProgress == 0 ? "±" : progressIndex;
 
-      // 増減分のテキストを定義
       if (getConfig().displayProgress) {
         writingProgressString =
           " 進捗" +
@@ -282,11 +278,8 @@ export class CharacterCounter {
       }
     }
 
-    // MARK: 進捗
-
     let totalWritingProgressString = "";
     if (getConfig().displayProgress) {
-      // 執筆日またぎ処理（年月日まで比較）
       const last = this.totalCountPreviousDate;
       const now = new Date();
       const isSameDay =
@@ -305,22 +298,15 @@ export class CharacterCounter {
         this.totalCountPrevious = totalCount;
         this.totalSheetCountPrevious = totalSheetCount;
       }
-      
+
       this.totalWritingProgress = totalCount - this.totalCountPrevious;
       this.totalWritingProgressSheet =
         totalSheetCount - this.totalSheetCountPrevious;
-      // console.log(
-      //   "進捗デバッグ",
-      //   totalCount,
-      //   activeCount,
-      //   this.totalCountPrevious,
-      // );
-      // 総量：増減分のプラス記号、±記号を定義
+
       let progressTotalIndex = this.totalWritingProgress > 0 ? "+" : "";
       progressTotalIndex =
         this.totalWritingProgress == 0 ? "±" : progressTotalIndex;
 
-      // 増減分のテキストを定義
       const totalWritingProgressNumber =
         progressTotalIndex +
         Intl.NumberFormat().format(Math.abs(this.totalWritingProgress)) +
@@ -337,19 +323,16 @@ export class CharacterCounter {
         : " 進捗" + totalWritingProgressNumber;
     }
 
-    // 数字表示
     const activeDocLengthInNumberStr = `${Intl.NumberFormat().format(
       getLength(doc.getText()).lengthInNumber,
     )}文字${writingProgressString}`;
 
-    // 原稿用紙表示
     const numberOfSheetFloat = getLength(doc.getText()).lengthInSheet;
     const activeDocLengthInSheetStr = formatSheetsAndLines(numberOfSheetFloat);
 
     let targetNumberStr = "";
 
     if (this._countingFolder != "") {
-      //締め切りフォルダーが設定されている時
       const isDeadLineInNumber = this._countingTarget.includes(".")
         ? false
         : true;
@@ -377,19 +360,16 @@ export class CharacterCounter {
       "$(novel-file-v)" + Intl.NumberFormat().format(activeCount) + "文字";
     const activeCountSheetStr = formatSheetsAndLines(activeheetCount);
 
-    if (draftRoot() == "") {
-      //テキストファイルを直接開いているときの出力
+    if (!root) {
       this._statusBarItem.text =
         activeDocLengthInNumberStr + activeDocLengthInSheetStr;
     }
 
-    this._statusBarItem.text = statusBarItem();
+    this._statusBarItem.text = statusBarItem(root);
     this._statusBarItem.show();
 
-    function statusBarItem(): string {
-      let statusBarText = "";
-      if (draftRoot() == "") {
-        //テキストファイルを直接開いているときの出力
+    function statusBarItem(rootPath: string): string {
+      if (!rootPath) {
         return (
           "$(file-text)" +
           activeDocLengthInNumberStr +
@@ -397,11 +377,8 @@ export class CharacterCounter {
         );
       }
 
-      // 合計テキストの追加
       let statusBarItemText = "$(folder-library)";
       const showNumber = getConfig().displayCountOfNumber;
-      const showSheet = getConfig().displayCountOfSheet;
-      const showProgress = getConfig().displayProgress;
       if (getConfig().displayCountOfSheet) {
         statusBarItemText +=
           totalSheetCountStr + (showNumber ? `(${totalCountStr})` : "");
@@ -410,10 +387,8 @@ export class CharacterCounter {
       }
       statusBarItemText += totalWritingProgressString;
 
-      // 締切フォルダーテキストの追加
       statusBarItemText += targetNumberStr;
 
-      // アクティブテキストの追加
       if (getConfig().displayCountOfSheet) {
         statusBarItemText +=
           " $(file-text)" +
@@ -424,14 +399,12 @@ export class CharacterCounter {
       }
       statusBarItemText += writingProgressString;
 
-      // 編集距離の追加
       statusBarItemText += editDistance;
 
       return statusBarItemText;
     }
   }
 
-  // MARK: アクティブ文字数取得
   public _getCharacterCount(doc: TextDocument): {
     lengthInNumber: number;
     lengthInSheet: number;
@@ -439,89 +412,91 @@ export class CharacterCounter {
     return getLength(doc.getText());
   }
 
-  public _updateProjectCharacterCount(): void {
-    projectDraftLengthObj.lengthInNumber =
-      totalLength(draftRoot()).lengthInNumber;
-    projectDraftLengthObj.lengthInSheet =
-      totalLength(draftRoot()).lengthInSheet;
+  public async _updateProjectCharacterCount(): Promise<void> {
+    const root = await manuscriptRoot();
+    if (root) {
+      const total = await totalLength(root);
+      projectDraftLengthObj.lengthInNumber = total.lengthInNumber;
+      projectDraftLengthObj.lengthInSheet = total.lengthInSheet;
+    }
     if (this._countingFolder != "") {
-      //締め切りフォルダーの更新
+      const folderTotal = await totalLength(this._countingFolder);
       this._folderCount = {
         label: path.basename(this._countingFolder),
         amountLength: {
-          lengthInNumber: totalLength(this._countingFolder).lengthInNumber,
-          lengthInSheet: totalLength(this._countingFolder).lengthInSheet,
+          lengthInNumber: folderTotal.lengthInNumber,
+          lengthInSheet: folderTotal.lengthInSheet,
         },
       };
     }
-    this.updateCharacterCount();
+    await this.updateCharacterCount();
   }
 
-  public _setCounterToFolder(
+  public async _setCounterToFolder(
     pathToFolder: string,
     targetCharacter: string,
-  ): void {
-    if (!fs.existsSync(pathToFolder)) {
+  ): Promise<void> {
+    if (!(await pathExists(pathToFolder))) {
       this._countingFolder = "";
       this._countingTarget = "";
       countingFolderPath = "";
-      this._updateProjectCharacterCount();
-      this._setIfChildOfTarget();
+      await this._updateProjectCharacterCount();
+      await this._setIfChildOfTarget();
       return;
     }
     countingFolderPath = pathToFolder;
     countingTarget = targetCharacter;
     this._countingFolder = pathToFolder;
     this._countingTarget = targetCharacter;
-    this._updateProjectCharacterCount();
-    this._setIfChildOfTarget();
+    await this._updateProjectCharacterCount();
+    await this._setIfChildOfTarget();
   }
 
-  private _lengthByPath(dirPath: string): {
+  private async _lengthByPath(dirPath: string): Promise<{
     lengthInNumber: number;
     lengthInSheet: number;
-  } {
-    // パスを正規化する
-    dirPath = dirPath.normalize("NFC"); // NFCに正規化
-    if (draftRoot() == "") {
+  }> {
+    dirPath = dirPath.normalize("NFC");
+    const root = await manuscriptRoot();
+    if (root == "") {
       return { lengthInNumber: 0, lengthInSheet: 0 };
     }
     const tree = new TreeModel();
     const draftTree = tree.parse({
-      dir: draftRoot(),
+      dir: root,
       name: "root",
       length: { lengthInNumber: 0, lengthInSheet: 0 },
     });
 
     resetCounter();
-    draftsObject(draftRoot()).forEach((element) => {
+    for (const element of await draftsObject(root)) {
       const draftNode = tree.parse(element);
       draftTree.addChild(draftNode);
-    });
+    }
     const targetFileNode = draftTree.first(function (node) {
       return node.model.dir.normalize("NFC") === dirPath;
     });
 
     if (targetFileNode) {
       return targetFileNode.model.length;
-    } else {
-      return { lengthInNumber: 0, lengthInSheet: 0 };
     }
+    return { lengthInNumber: 0, lengthInSheet: 0 };
   }
 
-  public _setIfChildOfTarget(): boolean {
-    if (draftRoot() == "") {
+  public async _setIfChildOfTarget(): Promise<boolean> {
+    const root = await manuscriptRoot();
+    if (root == "") {
       return false;
     }
     const tree = new TreeModel();
-    const draftTree = tree.parse({ dir: draftRoot(), name: "root", length: 0 });
+    const draftTree = tree.parse({ dir: root, name: "root", length: 0 });
     const activeDocumentPath = window.activeTextEditor?.document.uri.fsPath;
 
     resetCounter();
-    draftsObject(draftRoot()).forEach((element) => {
+    for (const element of await draftsObject(root)) {
       const draftNode = tree.parse(element);
       draftTree.addChild(draftNode);
-    });
+    }
     const deadLineFolderNode = draftTree.first(
       (node) => node.model.dir === this._countingFolder,
     );
@@ -540,7 +515,6 @@ export class CharacterCounter {
     }
 
     this._isEditorChildOfTargetFolder = false;
-
     return false;
   }
 
@@ -559,7 +533,7 @@ export class CharacterCounter {
     const activeDocumentPath = window.activeTextEditor?.document.uri.fsPath;
     if (
       workspace.workspaceFolders == undefined ||
-      !ifFileInDraft(activeDocumentPath) ||
+      !(await ifFileInDraft(activeDocumentPath)) ||
       getConfig().displayEditDistance == false
     ) {
       return;
@@ -577,83 +551,53 @@ export class CharacterCounter {
     };
     const git = simpleGit(options);
 
-    const isRepo = await git.checkIsRepo();
-    if (isRepo) {
-      await git
-        .revparse("--is-inside-work-tree")
-        .then(async () => {
-          let latestHash = "";
-          const logOption = {
-            file: relatevePath,
-            "--until": "today00:00:00",
-            n: 1,
-          };
-          let showString = "";
-          await git
-            .log(logOption)
-            .then((logs) => {
-              //console.log(logs);
-              if (logs.total === 0) {
-                //昨日以前のコミットがなかった場合、当日中に作られた最古のコミットを比較対象に設定する。
-                const logOptionLatest = {
-                  file: relatevePath,
-                  "--reverse": null,
-                  "--max-count": "10",
-                };
-                git
-                  .log(logOptionLatest)
-                  .then((logsLatest) => {
-                    if (logsLatest?.total === 0) {
-                      window.showInformationMessage(
-                        `このファイルはまだコミットされていないようです`,
-                      );
-                      this.ifEditDistance = false;
-                      this.latestText = null;
-                      this.updateCharacterCount();
-                    } else {
-                      latestHash = logsLatest.all[0].hash;
-                      showString = latestHash + ":" + relatevePath;
-                      git
-                        .show(showString)
-                        .then((showLog) => {
-                          if (typeof showLog === "string") {
-                            if (showLog == "") showLog = " ";
-                            this.latestText = showLog;
-                            this.ifEditDistance = true;
-                            this.updateCharacterCount();
-                          }
-                        })
-                        .catch((err) =>
-                          console.error("failed to git show:", err),
-                        );
-                    }
-                  })
-                  .catch((err) => console.error("failed to git show:", err));
-              } else {
-                latestHash = logs.all[0].hash;
-                showString = latestHash + ":" + relatevePath;
-                git
-                  .show(showString)
-                  .then((showLog) => {
-                    if (typeof showLog === "string") {
-                      this.latestText = showLog;
-                      this.ifEditDistance = true;
-                      this.updateCharacterCount();
-                    }
-                  })
-                  .catch((err) => console.error("failed to git show:", err));
-              }
-            })
-            .catch((err) => {
-              console.error("failed:", err);
-              this.ifEditDistance = false;
-              this.latestText = null;
-              this.updateCharacterCount();
-            });
-        })
-        .catch((err) => {
-          console.error("git.revparse:", err);
-        });
+    try {
+      const isRepo = await git.checkIsRepo();
+      if (!isRepo) return;
+      await git.revparse("--is-inside-work-tree");
+
+      const logOption = {
+        file: relatevePath,
+        "--until": "today00:00:00",
+        n: 1,
+      };
+      const logs = await git.log(logOption);
+
+      let latestHash = "";
+      let showString = "";
+      if (logs.total === 0) {
+        const logOptionLatest = {
+          file: relatevePath,
+          "--reverse": null,
+          "--max-count": "10",
+        };
+        const logsLatest = await git.log(logOptionLatest);
+        if (logsLatest?.total === 0) {
+          window.showInformationMessage(
+            `このファイルはまだコミットされていないようです`,
+          );
+          this.ifEditDistance = false;
+          this.latestText = null;
+          await this.updateCharacterCount();
+          return;
+        }
+        latestHash = logsLatest.all[0].hash;
+      } else {
+        latestHash = logs.all[0].hash;
+      }
+      showString = latestHash + ":" + relatevePath;
+      let showLog = await git.show(showString);
+      if (typeof showLog === "string") {
+        if (showLog == "") showLog = " ";
+        this.latestText = showLog;
+        this.ifEditDistance = true;
+        await this.updateCharacterCount();
+      }
+    } catch (err) {
+      console.error("failed:", err);
+      this.ifEditDistance = false;
+      this.latestText = null;
+      await this.updateCharacterCount();
     }
   }
 
@@ -665,17 +609,18 @@ export class CharacterCounter {
 
   private keyPressFlag = false;
 
-  public _resetWritingProtgress(): void {
-    const currentTotal = totalLength(draftRoot());
+  public async _resetWritingProtgress(): Promise<void> {
+    const root = await manuscriptRoot();
+    const currentTotal = await totalLength(root);
     this.totalCountPrevious = currentTotal.lengthInNumber;
     this.totalSheetCountPrevious = currentTotal.lengthInSheet;
     this.totalCountPreviousDate = new Date();
     this._saveProgressBaseline(currentTotal, this.totalCountPreviousDate);
-    this.updateCharacterCount();
+    await this.updateCharacterCount();
     vscode.window.showInformationMessage(`今日の総合進捗をリセットしました`);
   }
 
-  public _updateEditDistanceActual(): void {
+  public async _updateEditDistanceActual(): Promise<void> {
     const currentText = window.activeTextEditor?.document.getText();
 
     if (this.latestText != null && typeof currentText == "string") {
@@ -683,7 +628,7 @@ export class CharacterCounter {
       this.writingProgress = currentText.length - this.latestText.length;
       this.keyPressFlag = false;
       this.isEditDistanceInCalc = false;
-      this.updateCharacterCount();
+      await this.updateCharacterCount();
     }
 
     delete this.timeoutID;
@@ -697,9 +642,8 @@ export class CharacterCounter {
         Math.ceil(window.activeTextEditor.document.getText().length / 100),
         500,
       );
-      //console.log('timeoutID', this.timeoutID, updateCounter);
       this.timeoutID = setTimeout(() => {
-        this._updateEditDistanceActual();
+        void this._updateEditDistanceActual();
       }, updateCounter);
     }
   }
@@ -724,7 +668,6 @@ export function formatSheetsAndLines(sheetFloat: number): string {
   if (sheetFloat <= 0) {
     return "0枚0行";
   }
-  // 枚数を0開始にするため、まず行に変換して切り上げる
   const totalLines = Math.ceil(sheetFloat * 20);
   const sheetInt = Math.floor(totalLines / 20);
   const modLines = totalLines % 20;
@@ -743,14 +686,14 @@ export function formatSignedSheetsAndLines(sheetFloat: number): string {
 // MARK: コントローラー
 export class CharacterCounterController {
   private _characterCounter: CharacterCounter;
-  private _disposable: Disposable;
+  private _disposable: DisposableType;
 
   constructor(characterCounter: CharacterCounter) {
     this._characterCounter = characterCounter;
-    this._characterCounter._setEditDistance();
-    this._characterCounter.updateCharacterCount();
+    void this._characterCounter._setEditDistance();
+    void this._characterCounter.updateCharacterCount();
 
-    const subscriptions: Disposable[] = [];
+    const subscriptions: DisposableType[] = [];
     window.onDidChangeTextEditorSelection(this._onEvent, this, subscriptions);
     workspace.onDidSaveTextDocument(this._onSave, this, subscriptions);
     window.onDidChangeActiveTextEditor(
@@ -763,29 +706,27 @@ export class CharacterCounterController {
   }
 
   private _onEvent() {
-    this._characterCounter.updateCharacterCount();
+    void this._characterCounter.updateCharacterCount();
     if (
       this._characterCounter.ifEditDistance &&
       !this._characterCounter.isEditDistanceInCalc
     ) {
-      // console.log(`Git読んだ直後：${this._characterCounter.ifEditDistance}`);
       this._characterCounter._updateEditDistanceDelay();
     }
   }
 
   private _onFocusChanged() {
-    this._characterCounter._setIfChildOfTarget();
-    //編集距離の初期化
+    void this._characterCounter._setIfChildOfTarget();
     this._characterCounter.ifEditDistance = false;
     this._characterCounter.latestText = "\n";
     this._characterCounter.editDistance = -1;
-    this._characterCounter._setEditDistance();
+    void this._characterCounter._setEditDistance();
     this._characterCounter._updateCountingObject();
   }
 
   private _onSave() {
     this._characterCounter._updateCountingObject();
-    this._characterCounter._updateProjectCharacterCount();
+    void this._characterCounter._updateProjectCharacterCount();
   }
 
   public dispose(): void {

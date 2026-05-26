@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { getConfig } from "./config";
-import { draftRoot, draftsObject, fileList, ifFileInDraft } from "./compile";
+import { getConfig } from "./config.js";
+import { manuscriptRoot, fileList, ifFileInDraft } from "./compile.js";
 
 export type OriginEditor = vscode.TextEditor | "active" | undefined;
 
@@ -224,7 +224,8 @@ export async function previewBesideSection(editor: vscode.TextEditor) {
   const decorationNext = { range };
   decorationsArrayNext.push(decorationNext);
 
-  getBesideText(editor.document).then((value) => {
+  const value = await getBesideText(editor.document);
+  {
     const prevText = value.prevText;
     const nextText = value.nextText;
 
@@ -283,67 +284,63 @@ export async function previewBesideSection(editor: vscode.TextEditor) {
       editor.setDecorations(newNextSectionStyle, decorationsArrayNext);
       nextSectionStyle = newNextSectionStyle;
     }
-  });
+  }
 }
 
 export class MyCodelensProvider implements vscode.CodeLensProvider {
   async provideCodeLenses(
     document: vscode.TextDocument,
   ): Promise<vscode.CodeLens[]> {
-    return new Promise((resolve) => {
-      if (!getConfig().sceneNav) return;
-      const editor = vscode.window.activeTextEditor;
+    if (!getConfig().sceneNav) return [];
+    const editor = vscode.window.activeTextEditor;
 
-      //const besides = getBesideText(document);
-      getBesideText(document).then((value) => {
-        const prevTitle = value.prevTitle;
-        const prevText = value.prevText.slice(-30).replace(/\n/g, "");
-        const nextTitle = value.nextTitle;
-        const prevUrl = value.prevUrl;
-        const nextUrl = value.nextUrl;
+    const value = await getBesideText(document);
+    const prevTitle = value.prevTitle;
+    const prevText = value.prevText.slice(-30).replace(/\n/g, "");
+    const nextTitle = value.nextTitle;
+    const prevUrl = value.prevUrl;
+    const nextUrl = value.nextUrl;
 
-        const prevLens = {
-          command: "Novel.openfile",
-          title: prevTitle + " ……" + prevText,
-          tooltip: "前のシーンのファイルを開く",
-          arguments: [prevUrl],
-        };
+    const prevLens = {
+      command: "Novel.openfile",
+      title: prevTitle + " ……" + prevText,
+      tooltip: "前のシーンのファイルを開く",
+      arguments: [prevUrl],
+    };
 
-        const nextLens = {
-          command: "Novel.openfile",
-          title: nextTitle,
-          tooltip: "次のシーンのファイルを開く",
-          arguments: [nextUrl],
-        };
+    const nextLens = {
+      command: "Novel.openfile",
+      title: nextTitle,
+      tooltip: "次のシーンのファイルを開く",
+      arguments: [nextUrl],
+    };
 
-        const topOfDocument = new vscode.Range(0, 0, 0, 0);
-        let lastLine = editor?.document.lineAt(editor.document.lineCount - 1);
-        if (!lastLine?.isEmptyOrWhitespace && nextTitle != "") {
-          editor?.edit((edit) => {
-            edit.insert(
-              new vscode.Position(
-                editor.document.lineCount,
-                lastLine!.range.contains.length,
-              ),
-              "\n",
-            );
-            lastLine = editor?.document.lineAt(editor.document.lineCount - 1);
-          });
-        }
-        const taleOfDocument = new vscode.Range(
-          lastLine!.range.end,
-          lastLine!.range.end,
+    const topOfDocument = new vscode.Range(0, 0, 0, 0);
+    let lastLine = editor?.document.lineAt(editor.document.lineCount - 1);
+    if (!lastLine?.isEmptyOrWhitespace && nextTitle != "") {
+      await editor?.edit((edit) => {
+        edit.insert(
+          new vscode.Position(
+            editor.document.lineCount,
+            lastLine!.range.contains.length,
+          ),
+          "\n",
         );
-
-        const CodeLenses = [];
-        if (prevTitle != "")
-          CodeLenses.push(new vscode.CodeLens(topOfDocument, prevLens));
-        if (nextTitle != "")
-          CodeLenses.push(new vscode.CodeLens(taleOfDocument, nextLens));
-
-        resolve(CodeLenses);
+        lastLine = editor?.document.lineAt(editor.document.lineCount - 1);
       });
-    });
+    }
+    const taleOfDocument = new vscode.Range(
+      lastLine!.range.end,
+      lastLine!.range.end,
+    );
+
+    const CodeLenses: vscode.CodeLens[] = [];
+    if (prevTitle != "")
+      CodeLenses.push(new vscode.CodeLens(topOfDocument, prevLens));
+    if (nextTitle != "")
+      CodeLenses.push(new vscode.CodeLens(taleOfDocument, nextLens));
+
+    return CodeLenses;
   }
 }
 
@@ -355,7 +352,7 @@ async function getBesideText(document: vscode.TextDocument): Promise<{
   nextTitle: string;
   nextText: string;
 }> {
-  if (!ifFileInDraft(document.fileName)) {
+  if (!(await ifFileInDraft(document.fileName))) {
     return {
       prevUrl: null,
       prevTitle: "",
@@ -365,7 +362,7 @@ async function getBesideText(document: vscode.TextDocument): Promise<{
       nextText: "",
     };
   }
-  const myFileList = fileList(draftRoot());
+  const myFileList = await fileList(await manuscriptRoot());
   // console.log("fileList",myFileList);
   // console.log("draftsObject",draftsObject(draftRoot()));
   const docIndex = myFileList.files.findIndex(

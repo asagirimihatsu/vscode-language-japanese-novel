@@ -1,36 +1,68 @@
-import * as assert from 'assert';
-import * as vscode from 'vscode';
-import { editorText, markUpHtml } from '../../editor'
+import * as assert from "node:assert";
+import { beforeEach, describe, test } from "node:test";
+import * as vscode from "vscode";
+import { editorText, markUpHtml } from "../../editor.js";
 
-suite('Editor Test Suite', () => {
-    suite('editorText', () => {
-        let textDoc: vscode.TextDocument;
-        let textEditor: vscode.TextEditor;
-        setup(async () =>  {
-            textDoc = await vscode.workspace.openTextDocument(
-                {language: 'text', content: "こんにちは"}
-            );
-            textEditor = await vscode.window.showTextDocument(textDoc);
-        });
-        test('HTMLタグがつけられたテキストを返す', () => {
-            assert.strictEqual<string>(editorText(textEditor), '<p><span id="cursor">こ</span>んにちは</p>');
-        });
+describe("Editor Test Suite", () => {
+  describe("editorText", () => {
+    let textDoc: vscode.TextDocument;
+    let textEditor: vscode.TextEditor;
+    beforeEach(async () => {
+      textDoc = await vscode.workspace.openTextDocument({
+        language: "text",
+        content: "こんにちは",
+      });
+      textEditor = await vscode.window.showTextDocument(textDoc);
     });
-    suite('markUpHtml', () => {
-        test('普通の文字列はそのまま通る', () => {
-            assert.strictEqual<string>(markUpHtml("こんにちは。"), "こんにちは。");
-        });
-        test('"｜"を使うルビ記法が正しく変換される', () => {
-            assert.strictEqual<string>(markUpHtml("｜今日《きょう》はいい｜天気《てんき》ですね。"),
-                "<ruby>今日<rt>きょう</rt></ruby>はいい<ruby>天気<rt>てんき</rt></ruby>ですね。");
-        });
-        test('"｜"を使わないルビ記法が正しく変換される', () => {
-            assert.strictEqual<string>(markUpHtml("今日《きょう》はいい天気《てんき》ですね。"),
-                "<ruby>今日<rt>きょう</rt></ruby>はいい<ruby>天気<rt>てんき</rt></ruby>ですね。");
-        });
-        test('傍点記法が正しく変換される', () => {
-            assert.strictEqual<string>(markUpHtml("今日はいい天気［＃「いい天気」に傍点］ですね。"),
-                '今日は<em class="side-dot">いい天気</em>ですね。');
-        });
+    test("カーソル位置にspanが入り、id付きの段落タグで囲まれる", () => {
+      assert.strictEqual<string>(
+        editorText(textEditor),
+        '<p id="l-0"><span id="cursor">こ</span>んにちは</p>',
+      );
     });
+  });
+
+  describe("markUpHtml", () => {
+    test("プレーンな文字列はそのまま通る", () => {
+      assert.strictEqual<string>(
+        markUpHtml("こんにちは。"),
+        "こんにちは。",
+      );
+    });
+
+    test("Markdown見出し「#」がh1に変換される", () => {
+      assert.strictEqual<string>(
+        markUpHtml('<p id="l-0"># タイトル</p>'),
+        '<h1 id="l-0">タイトル</h1>',
+      );
+    });
+
+    test("Markdown見出し「##」がh2に変換される", () => {
+      assert.strictEqual<string>(
+        markUpHtml('<p id="l-3">## 章</p>'),
+        '<h2 id="l-3">章</h2>',
+      );
+    });
+
+    test("青空文庫注記法の大見出しがh1に変換される", () => {
+      assert.strictEqual<string>(
+        markUpHtml('<p id="l-5">序章［＃「序章」は大見出し］</p>'),
+        '<h1 id="l-5">序章</h1>',
+      );
+    });
+
+    test("字下げ開始タグがdivに変換される", () => {
+      assert.strictEqual<string>(
+        markUpHtml('<p id="l-1">［＃ここから１文字下げ］</p>'),
+        '<div class="indent-1">',
+      );
+    });
+
+    test("字下げ終了タグが閉じdivに変換される", () => {
+      assert.strictEqual<string>(
+        markUpHtml('<p id="l-2">［＃ここで字下げ終わり］</p>'),
+        "</div>",
+      );
+    });
+  });
 });

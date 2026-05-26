@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "jsx": "react-jsx",
+    "types": [],
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src/webview/**/*.ts",
+    "src/webview/**/*.tsx",
+    "src/vivlioViewser/**/*.ts"
+  ],
+  "exclude": ["node_modules", ".vscode-test", "dist"]
+}

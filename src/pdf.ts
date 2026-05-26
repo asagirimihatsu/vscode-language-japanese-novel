@@ -1,16 +1,13 @@
 import * as vscode from "vscode";
-import * as path from "path";
-import * as fs from "fs";
-import { editorText } from "./editor";
-import { getConfig, NovelSettings } from "./config";
-import * as cp from "child_process";
-import { draftRoot } from "./compile";
-// const psTree = require('ps-tree');
-// import psTree from "ps-tree";
+import * as path from "node:path";
+import * as fs from "node:fs/promises";
+import * as cp from "node:child_process";
+import { promisify } from "node:util";
+import { editorText } from "./editor.js";
+import { getConfig, type NovelSettings } from "./config.js";
 
+const execAsync = promisify(cp.exec);
 const output = vscode.window.createOutputChannel("Novel");
-
-let vivlioProcess: cp.ChildProcess | null = null;
 
 export function previewpdf(context: vscode.ExtensionContext) {
   exportpdf(context, true);
@@ -71,38 +68,35 @@ export async function exportpdf(
       vscode.window.showInformationMessage(
         `Vivliostyle起動中……\n初回起動には少々時間がかかります`,
       );
-      cp.exec(
-        `${vivlioCommand} ${vivlioSubCommand} ${execPath} ${vivlioExportOption} "${vivlioExportPath}"`,
-        (err, stdout, stderr) => {
-          if (err) {
-            output.appendLine(
-              `VivlioStyleの処理でエラーが発生しました: ${err.message}`,
-            );
-            return;
-          }
-          if (stdout) {
-            console.log(`Vivlio出力： ${stdout}`);
-          }
-          if (stderr) {
-            console.log(`Vivlioエラー出力： ${stderr}`);
-          }
-          if (!preview) {
-            output.appendLine(`ファイル名: ${stdout}`);
-            output.appendLine("PDFの保存が終わりました");
-          }
-          vscode.window.showInformationMessage(`PDFの保存が終わりました`);
-        },
-      );
+      try {
+        const { stdout, stderr } = await execAsync(
+          `${vivlioCommand} ${vivlioSubCommand} ${execPath} ${vivlioExportOption} "${vivlioExportPath}"`,
+        );
+        if (stdout) {
+          console.log(`Vivlio出力： ${stdout}`);
+        }
+        if (stderr) {
+          console.log(`Vivlioエラー出力： ${stderr}`);
+        }
+        output.appendLine(`ファイル名: ${stdout}`);
+        output.appendLine("PDFの保存が終わりました");
+        vscode.window.showInformationMessage(`PDFの保存が終わりました`);
+      } catch (err) {
+        output.appendLine(
+          `VivlioStyleの処理でエラーが発生しました: ${(err as Error).message}`,
+        );
+      }
     } else {
-      launchVivlioStylePreviewOnPanel(context);
+      await launchVivlioStylePreviewOnPanel(context);
     }
   }
 }
 
 let currentPanel: vscode.WebviewPanel | undefined = undefined; // 既存のWebViewを追跡
-let currentEdior: vscode.TextEditor | undefined = undefined; // Vivliostyleを開いたエディターを追跡;
 
-function launchVivlioStylePreviewOnPanel(context: vscode.ExtensionContext) {
+async function launchVivlioStylePreviewOnPanel(
+  context: vscode.ExtensionContext,
+): Promise<void> {
   const activeEditor = vscode.window.activeTextEditor;
 
   if (!activeEditor) {
@@ -112,12 +106,10 @@ function launchVivlioStylePreviewOnPanel(context: vscode.ExtensionContext) {
 
   // 既存のWebViewがpdfPreviewであるか確認
   if (currentPanel && currentPanel.viewType === "pdfPreview") {
-    sendMessageToPanel(currentPanel, activeEditor); // activeEditorを渡す
-    currentPanel.reveal(vscode.ViewColumn.Two); // 既存のパネルを表示
+    await sendMessageToPanel(currentPanel, activeEditor);
+    currentPanel.reveal(vscode.ViewColumn.Two);
     return;
   }
-
-  currentEdior = vscode.window.activeTextEditor;
 
   const panel = vscode.window.createWebviewPanel(
     "pdfPreview",
@@ -152,7 +144,7 @@ function launchVivlioStylePreviewOnPanel(context: vscode.ExtensionContext) {
     "vivlioViewer",
     "index.html",
   );
-  const htmlContent = fs.readFileSync(htmlFilePath, "utf8");
+  const htmlContent = await fs.readFile(htmlFilePath, "utf8");
 
   const extensionPath = vscode.extensions.getExtension(
     "TaiyoFujii.novel-writer",
@@ -172,7 +164,7 @@ function launchVivlioStylePreviewOnPanel(context: vscode.ExtensionContext) {
       );
 
     // WebViewの作成後にメッセージを送信
-    sendMessageToPanel(panel, activeEditor);
+    await sendMessageToPanel(panel, activeEditor);
 
     // パネルが閉じられたときにcurrentPanelをクリア
     panel.onDidDispose(() => {
@@ -194,10 +186,10 @@ interface PanelMessage {
 
 let selectionChangeDisposable: vscode.Disposable | undefined;
 
-function sendMessageToPanel(
+async function sendMessageToPanel(
   panel: vscode.WebviewPanel,
   editor: vscode.TextEditor,
-) {
+): Promise<void> {
   const previewSettings: NovelSettings = getConfig();
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders) {
@@ -210,7 +202,7 @@ function sendMessageToPanel(
     "publish.html",
   );
   try {
-    const publishContent = fs.readFileSync(publishFilePath, "utf8");
+    const publishContent = await fs.readFile(publishFilePath, "utf8");
 
     const activeEditor = editor;
     let lineNumber;
@@ -406,9 +398,6 @@ async function getPrintContent(): Promise<string> {
       : "";
   const columnHeitghtRate =
     "calc(" + fontSize * previewSettings.lineLength + "mm + 0.5em)";
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const typesettingInformation = `${previewSettings.lineLength}字×${linesPerPage}行`;
 
   const pageNumberFormatR = eval(
     "`" +

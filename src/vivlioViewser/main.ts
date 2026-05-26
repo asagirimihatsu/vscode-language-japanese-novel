@@ -1,6 +1,4 @@
 import {
-  PageProgression,
-  printHTML,
   CoreViewer,
   Navigation,
   PageViewMode,
@@ -32,10 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const blob = new Blob([documentContent], { type: "text/html" });
           const url = URL.createObjectURL(blob);
 
-          const linenumber = message.lineNumber;
-
           // Callback function to execute when mutations are observed
-          let loadInternalLineCalled = false;
           let previousPageNumber = -1;
 
           const mutationCallback: MutationCallback = async (mutationsList) => {

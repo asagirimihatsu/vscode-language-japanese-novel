@@ -1,7 +1,14 @@
 import * as vscode from "vscode";
 import { Position, Range } from "vscode";
-import { builder, IpadicFeatures, TokenizerBuilder, Tokenizer } from "kuromoji";
-import { getConfig } from "./config";
+import kuromojiPkg from "kuromoji";
+import type {
+  IpadicFeatures,
+  Tokenizer,
+  TokenizerBuilder,
+} from "kuromoji";
+import { getConfig } from "./config.js";
+
+const { builder } = kuromojiPkg;
 
 const tokenTypes = new Map<string, number>();
 const tokenModifiers = new Map<string, number>();
@@ -49,18 +56,28 @@ export const legend = (function () {
   );
 })();
 
-//let kuromojiDictPath = '';
 let kuromojiBuilder: TokenizerBuilder<IpadicFeatures>;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let tokenCaching = false;
 export let kuromojiDictPath = "";
 
-export const tokenizer = () =>
-  new Promise<Tokenizer<IpadicFeatures>>((done) => {
-    kuromojiBuilder.build((_err, tokenizer) => {
-      done(tokenizer);
-    });
-  });
+let _tokenizerPromise: Promise<Tokenizer<IpadicFeatures>> | undefined;
+
+export const tokenizer = (): Promise<Tokenizer<IpadicFeatures>> => {
+  if (!_tokenizerPromise) {
+    _tokenizerPromise = new Promise<Tokenizer<IpadicFeatures>>(
+      (resolve, reject) => {
+        kuromojiBuilder.build((err, builtTokenizer) => {
+          if (err) {
+            _tokenizerPromise = undefined;
+            reject(err);
+            return;
+          }
+          resolve(builtTokenizer);
+        });
+      },
+    );
+  }
+  return _tokenizerPromise;
+};
 
 export function activateTokenizer(
   context: vscode.ExtensionContext,
@@ -84,15 +101,6 @@ export function activateTokenizer(
   tokenizeFlag = typeof tokenizeSetting == "boolean" ? tokenizeSetting : true;
 }
 
-interface IParsedToken {
-  line: number;
-  startCharacter: number;
-  length: number;
-  tokenType: string;
-  tokenModifiers: string[];
-}
-let chachedToken: IParsedToken[] = [];
-
 export class DocumentSemanticTokensProvider
   implements vscode.DocumentSemanticTokensProvider
 {
@@ -100,45 +108,30 @@ export class DocumentSemanticTokensProvider
     document: vscode.TextDocument,
     // token: vscode.CancellationToken
   ): Promise<vscode.SemanticTokens> {
-    //const allTokens = this._parseText(document.getText());
-    return new Promise((resolve) => {
-      if (tokenizeFlag === true) {
-        // const r: number[][] = [];
-        const builder = new vscode.SemanticTokensBuilder();
-        // const startTime = performance.now();
+    if (tokenizeFlag !== true) {
+      const builder = new vscode.SemanticTokensBuilder();
+      builder.push(0, 0, 0, 0, 0);
+      return builder.build();
+    }
+    const builder = new vscode.SemanticTokensBuilder();
+    const tokenizerInstance = await tokenizer();
+    let i = 0;
 
-        kuromojiBuilder.build(
-          async (err: Error, tokenizer: Tokenizer<IpadicFeatures>) => {
-            // 辞書がなかったりするとここでエラーになります(´・ω・｀)
-            if (err) {
-              console.dir("Kuromoji initialize error:" + err.message);
-              throw err;
-            }
-            tokenCaching = true;
-            //		for (let i = 0; i < lines.length; i++) {
-            let i = 0;
-            //const line = lines[i];
+    const kuromojiToken = tokenizerInstance.tokenize(
+      document.getText().replace(/\n\x20/g, "\n→"),
+    );
 
-            // tokenizer.tokenize に文字列を渡すと、その文を形態素解析してくれます。
-            const kuromojiToken = tokenizer.tokenize(
-              document.getText().replace(/\n\x20/g, "\n→"),
-            );
+    let lineOffset = 0;
+    let openOffset = 0;
+    let closeOffset = 0;
+    let j = 0;
 
-            // console.dir(kuromojiToken);
-            let lineOffset = 0;
-            let openOffset = 0;
-            let closeOffset = 0;
-            let j = 0;
-
-            let isDialogue = false;
-            let isQuote = false;
-            let isMarkedProperNoun = false;
-            let isRuby = false;
-            let isComment = false;
-            let indentIndex = 0;
-            // let currentTokenModifire = ""; //現在（直前）のトークンモディファイア
-            let debugNum = { debug: false };
-            let previousToken: IpadicFeatures = {
+    let isDialogue = false;
+    let isQuote = false;
+    let isMarkedProperNoun = false;
+    let isRuby = false;
+    let isComment = false;
+    let previousToken: IpadicFeatures = {
               word_id: 0,
               word_type: "",
               word_position: 0,
@@ -297,8 +290,6 @@ export class DocumentSemanticTokensProvider
               //ルビモディファイア
               if (mytoken.surface_form === "《") {
                 kind = "bracket";
-                //  debugNum = {debug:true};
-                // console.log("debug",previousToken, mytoken);
                 if (openOffset === 0 || previousToken.surface_form === "。") {
                   isDialogue = true;
                   tokenModifireType = "dialogue";
@@ -306,9 +297,7 @@ export class DocumentSemanticTokensProvider
                   isRuby = true;
                   tokenModifireType = "aozora";
                 }
-              } //else {
-              debugNum = { debug: false };
-              // }
+              }
 
               if (isRuby == true) {
                 tokenModifireType = "aozora";
@@ -367,24 +356,10 @@ export class DocumentSemanticTokensProvider
                   tokenModifierNum,
                 );
               }
-              openOffset = closeOffset;
-              if (j == kuromojiToken.length - 1) {
-                //const endTime = performance.now();
-
-                resolve(builder.build());
-                //const builder = new vscode.SemanticTokensBuilder();
-                //return builder.build();
-              }
-              j++;
-            }
-          },
-        );
-      } else {
-        const builder = new vscode.SemanticTokensBuilder();
-        builder.push(0, 0, 0, 0, 0);
-        resolve(builder.build());
-      }
-    });
+      openOffset = closeOffset;
+      j++;
+    }
+    return builder.build();
   }
 
   async provideDocumentSemanticTokensEdits(
@@ -405,56 +380,6 @@ export class DocumentSemanticTokensProvider
     //});
   }
 
-  private _encodeTokenType(tokenType: string): number {
-    if (tokenTypes.has(tokenType)) {
-      return tokenTypes.get(tokenType)!;
-    } else if (tokenType === "notInLegend") {
-      return tokenTypes.size + 2;
-    }
-    return 0;
-  }
-
-  private _encodeTokenModifiers(strTokenModifiers: string[]): number {
-    let result = 0;
-    for (let i = 0; i < strTokenModifiers.length; i++) {
-      const tokenModifier = strTokenModifiers[i];
-      if (tokenModifiers.has(tokenModifier)) {
-        result = result | (1 << tokenModifiers.get(tokenModifier)!);
-      } else if (tokenModifier === "notInLegend") {
-        result = result | (1 << (tokenModifiers.size + 2));
-      }
-    }
-    return result;
-  }
-
-  private _parseText() {
-    const lineText = vscode.window.activeTextEditor?.document.lineAt(
-      vscode.window.activeTextEditor?.selection.active.line,
-    );
-    if (
-      lineText != undefined &&
-      typeof lineText.text == "string" &&
-      typeof lineText?.lineNumber == "number" &&
-      lineTokenCaching == false
-    ) {
-      // console.log(lineText);
-      morphemeBuilder(lineText.text);
-    }
-
-    // console.log("parse_text");
-    return chachedToken;
-  }
-
-  private _parseTextToken(text: string): {
-    tokenType: string;
-    tokenModifiers: string[];
-  } {
-    const parts = text.split(".");
-    return {
-      tokenType: parts[0],
-      tokenModifiers: parts.slice(1),
-    };
-  }
 }
 
 function encodeTokenModifiers(strTokenModifiers: string[]): number {
@@ -479,35 +404,15 @@ function encodeTokenType(tokenType: string): number {
   return 0;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let lineTokenCaching = false;
-
-export function clearChachedToken() {
-  chachedToken = [];
-}
-
-export function morphemeBuilder(text: string) {
-  //return new Promise((resolve, reject) => {
-  kuromojiBuilder.build(
-    async (err: Error, tokenizer: Tokenizer<IpadicFeatures>) => {
-      lineTokenCaching = true;
-      if (err) {
-        console.dir("Kuromoji initialize error:" + err.message);
-        throw err;
-      }
-      const kuromojiToken = tokenizer.tokenize(text);
-      let regexString = "";
-      let i = 0;
-      for await (let mytoken of kuromojiToken) {
-        mytoken = kuromojiToken[i];
-        regexString += "(" + mytoken.surface_form + ")|";
-        i++;
-      }
-      // const wordPatternRegex = new RegExp(regexString);
-      // console.log("Regex" + wordPatternRegex);
-      return regexString;
-    },
-  );
+export async function morphemeBuilder(text: string): Promise<string> {
+  const tokenizerInstance = await tokenizer();
+  const kuromojiToken = tokenizerInstance.tokenize(text);
+  let regexString = "";
+  for (let i = 0; i < kuromojiToken.length; i++) {
+    const mytoken = kuromojiToken[i];
+    regexString += "(" + mytoken.surface_form + ")|";
+  }
+  return regexString;
 }
 
 // 以下、たる変換

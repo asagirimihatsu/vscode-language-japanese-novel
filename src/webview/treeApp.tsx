@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import ReactDOM from "react-dom/client";
 import { useDrag, useDrop, DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
-import { commands, FileType } from "vscode";
 
 // MARK:型定義
 type TreeFileNode = {
@@ -21,8 +20,6 @@ interface DropResult {
   name: "before" | "inside" | "after";
   node: TreeFileNode;
 }
-
-let debugIncrement = 0;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const vscode = (window as any).acquireVsCodeApi();
@@ -185,14 +182,12 @@ const TreeView: React.FC<TreeViewProps> = React.memo(({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.name);
   const [isComposing, setIsComposing] = React.useState(false);
-  const [insertingValue, setInsertingValue] = useState("新規ファイル");
+  const [insertingValue, setInsertingValue] = useState("newfile");
 
   useEffect(() => {
     if (isInserting == true) {
-      let insertingNodeName = insertingValue;
       if (isOrdable) {
-        insertingNodeName =
-          insertingNode == "file" ? "新規ファイル" : "新規フォルダー";
+        setInsertingValue(insertingNode == "file" ? "charpter" : "volume");
       } else {
         const match = node.name.match(/^\d+/);
         if (match != null) {
@@ -202,13 +197,11 @@ const TreeView: React.FC<TreeViewProps> = React.memo(({
             "0",
           );
 
-          insertingNodeName =
-            insertingNode == "file"
-              ? `${fileNumber}-新規ファイル${draftFileType}`
-              : `${fileNumber}-新規フォルダー`;
+          setInsertingValue(insertingNode == "file"
+              ? `${fileNumber}-charpter${draftFileType}`
+              : `${fileNumber}-volume`);
         }
       }
-      setInsertingValue(insertingNodeName);
     }
   }, [isInserting]);
 

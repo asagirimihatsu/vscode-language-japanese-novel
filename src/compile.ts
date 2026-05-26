@@ -1,13 +1,14 @@
 import * as vscode from "vscode";
-import * as fs from "fs";
-import * as path from "path";
-import { getConfig } from "./config";
-import { deadLineFolderPath } from "./extension";
+import * as path from "node:path";
+import { getConfig } from "./config.js";
+import { deadLineFolderPath } from "./extension.js";
 import TreeModel from "tree-model";
-import neutralCompare from "natural-compare-lite";
 
-//fsモジュールの使い方 https://qiita.com/oblivion/items/2725a4b3ca3a99f8d1a3
-export default function compileDocs(): void {
+const filenameCollator = new Intl.Collator(undefined, { numeric: true });
+const neutralCompare = (a: string | undefined, b: string | undefined): number =>
+  filenameCollator.compare(a ?? "", b ?? "");
+
+export default async function compileDocs(): Promise<void> {
   const projectName =
     deadLineFolderPath() == ""
       ? vscode.workspace.workspaceFolders?.[0].name
@@ -15,79 +16,92 @@ export default function compileDocs(): void {
         "-" +
         path.basename(deadLineFolderPath());
   const projectPath = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+  if (!projectPath) return;
   const config = getConfig();
-  const separatorString = config.enableSeparator ? "\n　　　" + config.separator + "\n\n" : "";
+  const separatorString = config.enableSeparator
+    ? "\n\n　　　" + config.separator + "\n\n"
+    : "";
   const draftRootPath =
-    deadLineFolderPath() == "" ? draftRoot() : deadLineFolderPath();
+    deadLineFolderPath() == "" ? await manuscriptRoot() : deadLineFolderPath();
 
   console.log("ProjectName: ", projectName);
   console.log("締め切りフォルダー", deadLineFolderPath());
 
-  //      publishフォルダがなければ作る
-  if (!fs.existsSync(projectPath + "/publish")) {
-    fs.mkdirSync(projectPath + "/publish");
+  // publishフォルダがなければ作る
+  const publishUri = vscode.Uri.file(path.join(projectPath, "publish"));
+  try {
+    await vscode.workspace.fs.stat(publishUri);
+  } catch {
+    await vscode.workspace.fs.createDirectory(publishUri);
   }
 
-  //#region BLANK
-  //  空のファイルをつくる
+  // 出力ファイル
   const fileExtension = config.draftFileType;
-  const compiledTextFilePath =
-    projectPath + "/publish/" + projectName + fileExtension;
+  const compiledTextFileUri = vscode.Uri.file(
+    path.join(projectPath, "publish", projectName + fileExtension),
+  );
+
+  // テキストを書き込む
+  const filelist = (await fileList(draftRootPath)).files;
+  const chunks: string[] = [];
+  let isFirst = true;
+  for (const listItem of filelist) {
+    if (isFirst) {
+      isFirst = false;
+    } else {
+      chunks.push(separatorString);
+    }
+
+    if (listItem.dir) {
+      const fileUri = vscode.Uri.file(listItem.dir);
+      const fileData = await vscode.workspace.fs.readFile(fileUri);
+      const fileContent = Buffer.from(fileData).toString("utf8");
+
+      chunks.push(fileContent);
+    }
+  }
+
   try {
-    fs.writeFileSync(compiledTextFilePath, "");
+    await vscode.workspace.fs.writeFile(
+      compiledTextFileUri,
+      Buffer.from(chunks.join(""), "utf8"),
+    );
   } catch (err) {
     console.log("ファイル書き込み時のエラー", err);
   }
-
-  //  テキストを書き込む
-  const filelist = fileList(draftRootPath).files;
-  let separatorStart: string | null = null;
-  filelist.forEach((listItem: { dir?: string }) => {
-    let appendingContext = typeof separatorStart === "string" ? separatorStart + separatorString : "";
-
-    if (listItem.dir) {
-      appendingContext += fs.readFileSync(listItem.dir, "utf8");
-
-      if (appendingContext.endsWith("\n")) {
-        separatorStart = "";
-      } else {
-        // 改行で終わっていない場合は、次のテキストとの間に改行を入れる
-        // すなわち`\n\n separator\n\n`の形にする
-        separatorStart = "\n";
-      }
-    }
-    
-    fs.appendFileSync(compiledTextFilePath, appendingContext);
-  });
-  //console.log(fileList(draftRootPath, 0).files);
 }
 
-export function draftRoot(): string {
+export async function manuscriptRoot(): Promise<string> {
   if (
     vscode.workspace.name == undefined ||
     vscode.workspace.workspaceFolders == undefined
   ) {
     return "";
-  } else {
-    const projectPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    let draftRootPath = projectPath;
-    const projectFiles = fs.readdirSync(projectPath);
-    //「原稿」あるいは「Draft」フォルダーを原稿フォルダのルートにする。
-    if (
-      projectFiles.includes("Draft") &&
-      fs.statSync(projectPath + "/Draft").isDirectory()
-    ) {
-      draftRootPath = draftRootPath + "/Draft";
-    } else if (
-      projectFiles.includes("原稿") &&
-      fs.statSync(projectPath + "/原稿").isDirectory()
-    ) {
-      draftRootPath = draftRootPath + "/原稿";
-    }
+  }
+  const projectPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
-    return draftRootPath;
+  if (await isDirectory(path.join(projectPath, "manuscript"))) {
+    return path.join(projectPath, "manuscript");
+  }
+  if (await isDirectory(path.join(projectPath, "draft"))) {
+    return path.join(projectPath, "draft");
+  }
+  return projectPath;
+}
+
+async function isDirectory(fsPath: string): Promise<boolean> {
+  try {
+    const stat = await vscode.workspace.fs.stat(vscode.Uri.file(fsPath));
+    return (stat.type & vscode.FileType.Directory) === vscode.FileType.Directory;
+  } catch {
+    return false;
   }
 }
+
+type DirentLike = {
+  name: string;
+  type: vscode.FileType;
+};
 
 type File = {
   dir?: string;
@@ -95,7 +109,6 @@ type File = {
   length?: number;
   directoryName?: string;
   directoryLength?: number;
-  // FIXME: 一度も使われていないプロパティです。必要なければ削除してください。
   depthIndicator?: number;
 };
 
@@ -105,10 +118,9 @@ type FileList = {
   length: number;
 };
 
-//fileList()は、ファイルパスと（再帰処理用の）ディレクトリ深度を受け取って、ファイルリストの配列と総文字数を返す。
-export function fileList(dirPath: string): FileList {
+export async function fileList(dirPath: string): Promise<FileList> {
   let characterCount = 0;
-  const filesInFolder = getFiles(dirPath).sort((a, b) =>
+  const filesInFolder = (await getFiles(dirPath)).sort((a, b) =>
     neutralCompare(a.name, b.name),
   );
 
@@ -116,11 +128,15 @@ export function fileList(dirPath: string): FileList {
   const files: File[] = [];
 
   for (const dirent of filesInFolder) {
-    if (dirent.isDirectory() && dirent.name == "publish") {
+    const isDir = (dirent.type & vscode.FileType.Directory) !== 0;
+    const isFile = (dirent.type & vscode.FileType.File) !== 0;
+    if (isDir && dirent.name == "publish") {
+      // skip
     } else if (dirent.name.match(/^\..*/)) {
-    } else if (dirent.isDirectory()) {
+      // skip hidden
+    } else if (isDir) {
       const fp = path.join(dirPath, dirent.name);
-      const containerFiles = fileList(fp);
+      const containerFiles = await fileList(fp);
 
       files.push({
         directoryName: dirent.name,
@@ -128,22 +144,19 @@ export function fileList(dirPath: string): FileList {
       });
 
       characterCount += containerFiles.length;
-      files.push(containerFiles.files);
+      files.push(...containerFiles.files);
     } else if (
-      dirent.isFile() &&
+      isFile &&
       [getConfig().draftFileType].includes(path.extname(dirent.name))
     ) {
-      //文字数カウントテスト
-      let readingFile = fs.readFileSync(
-        path.join(dirPath, dirent.name),
-        "utf-8",
-      );
-      //カウントしない文字を除外 from https://github.com/8amjp/vsce-charactercount by MIT license
+      const fileUri = vscode.Uri.file(path.join(dirPath, dirent.name));
+      const data = await vscode.workspace.fs.readFile(fileUri);
+      let readingFile = Buffer.from(data).toString("utf8");
       readingFile = readingFile
-        .replace(/\s/g, "") // すべての空白文字
-        .replace(/《(.+?)》/g, "") // ルビ範囲指定記号とその中の文字
-        .replace(/[|｜]/g, "") // ルビ開始記号
-        .replace(/<!--(.+?)-->\n*/, ""); // コメントアウト
+        .replace(/\s/g, "")
+        .replace(/《(.+?)》/g, "")
+        .replace(/[|｜]/g, "")
+        .replace(/<!--(.+?)-->\n*/, "");
       files.push({
         dir: path.join(dirPath, dirent.name).normalize("NFC"),
         name: dirent.name,
@@ -152,21 +165,23 @@ export function fileList(dirPath: string): FileList {
       characterCount += readingFile.length;
     }
   }
-  //ファイルリストの配列と総文字数を返す
   return {
     label: labelOfList,
-    files: files.flat(),
+    files,
     length: characterCount,
   };
 }
 
-function getFiles(dirPath: string) {
-  //console.log("getFiles",dirPath);
-  const filesInFolder = fs.existsSync(dirPath)
-    ? fs.readdirSync(dirPath, { withFileTypes: true })
-    : [];
-  if (!filesInFolder) console.log(`${dirPath}が見つかりませんでした`);
-  return filesInFolder;
+async function getFiles(dirPath: string): Promise<DirentLike[]> {
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(
+      vscode.Uri.file(dirPath),
+    );
+    return entries.map(([name, type]) => ({ name, type }));
+  } catch {
+    console.log(`${dirPath}が見つかりませんでした`);
+    return [];
+  }
 }
 
 type FileNode = {
@@ -187,14 +202,12 @@ export function resetCounter() {
   globalCounter = 0;
 }
 
-//フォルダーの開閉情報など、キャッシュを扱う必要があるときはcontextを渡す
-export function draftsObject(
+export async function draftsObject(
   dirPath: string,
   context: vscode.ExtensionContext | null = null,
-  isRootCall: boolean = true, // トップレベルかどうかのフラグ
-): FileNode[] {
+  isRootCall: boolean = true,
+): Promise<FileNode[]> {
   const results: FileNode[] = [];
-  // トップレベルの呼び出し時のみカウンターをリセット
   if (isRootCall) {
     resetCounter();
   }
@@ -203,27 +216,27 @@ export function draftsObject(
     ? context.workspaceState.get<{ [key: string]: boolean }>("folderStates", {})
     : {};
 
-  const filesInFolder = getFiles(dirPath).sort((a, b) =>
+  const filesInFolder = (await getFiles(dirPath)).sort((a, b) =>
     neutralCompare(a.name, b.name),
   );
 
   for (const dirent of filesInFolder) {
-    if (dirent.isDirectory() && dirent.name === "publish") {
-      // console.log("publish folder");
+    const isDir = (dirent.type & vscode.FileType.Directory) !== 0;
+    const isFile = (dirent.type & vscode.FileType.File) !== 0;
+    if (isDir && (dirent.name === "publish" || dirent.name === "dict")) {
+      // skip
     } else if (dirent.name.match(/^\..*/)) {
-      // console.log('invisible docs');
-    } else if (dirent.isDirectory() && dirent.name === "dict") {
-      // console.log("dictionary folder");
-    } else if (dirent.isDirectory()) {
+      // skip hidden
+    } else if (isDir) {
       const directoryPath = path.join(dirPath, dirent.name);
-      const containerFiles = draftsObject(directoryPath, context, false);
+      const containerFiles = await draftsObject(directoryPath, context, false);
 
       let containerLength = 0;
       let containerLengthInSheet = 0;
-      containerFiles.forEach((element) => {
+      for (const element of containerFiles) {
         containerLength += element.length.lengthInNumber;
         containerLengthInSheet += element.length.lengthInSheet;
-      });
+      }
 
       const nodeId = `node_${globalCounter++}`;
       const directory: FileNode = {
@@ -235,19 +248,17 @@ export function draftsObject(
           lengthInSheet: containerLengthInSheet,
         },
         children: containerFiles,
-        isClosed: folderStates[nodeId] ?? true, // キャッシュされた状態を使用
+        isClosed: folderStates[nodeId] ?? true,
       };
 
       results.push(directory);
     } else if (
-      dirent.isFile() &&
+      isFile &&
       [getConfig().draftFileType].includes(path.extname(dirent.name))
     ) {
-      // 文字数カウントテスト
-      let readingFile = fs.readFileSync(
-        path.join(dirPath, dirent.name),
-        "utf-8",
-      );
+      const fileUri = vscode.Uri.file(path.join(dirPath, dirent.name));
+      const data = await vscode.workspace.fs.readFile(fileUri);
+      const readingFile = Buffer.from(data).toString("utf8");
 
       const fileNode: FileNode = {
         id: `node_${globalCounter++}`,
@@ -272,40 +283,42 @@ export function writeFolderStates(
     {},
   );
 
-  folders.forEach((folder) => {
+  for (const folder of folders) {
     folderStates[folder.id] = folder.isClosed ?? false;
     if (folder.children) {
-      writeFolderStates(context, folder.children); // 再帰的に子フォルダーも処理
+      writeFolderStates(context, folder.children);
     }
-  });
+  }
 
   context.workspaceState.update("folderStates", folderStates);
 }
-export function totalLength(dirPath: string): {
+
+export async function totalLength(dirPath: string): Promise<{
   lengthInNumber: number;
   lengthInSheet: number;
-} {
-  let result = { lengthInNumber: 0, lengthInSheet: 0 };
-  const drafts = draftsObject(dirPath);
-  drafts.forEach((element) => {
+}> {
+  const result = { lengthInNumber: 0, lengthInSheet: 0 };
+  const drafts = await draftsObject(dirPath);
+  for (const element of drafts) {
     result.lengthInNumber += element.length.lengthInNumber;
     result.lengthInSheet += element.length.lengthInSheet;
-  });
+  }
   return result;
 }
 
-export function ifFileInDraft(DocumentPath: string | undefined): boolean {
-  if (draftRoot() == "") {
+export async function ifFileInDraft(
+  DocumentPath: string | undefined,
+): Promise<boolean> {
+  const root = await manuscriptRoot();
+  if (root == "") {
     return false;
   }
-  //Treeモデル構築
   const tree = new TreeModel();
-  const draftTree = tree.parse({ dir: draftRoot(), name: "root", length: 0 });
-  //const activeDocumentPath = window.activeTextEditor?.document.uri.fsPath;
-  draftsObject(draftRoot()).forEach((element) => {
+  const draftTree = tree.parse({ dir: root, name: "root", length: 0 });
+  for (const element of await draftsObject(root)) {
     const draftNode = tree.parse(element);
     draftTree.addChild(draftNode);
-  });
+  }
   const activeDocumentObject = draftTree.first(
     (node) => node.model.dir === DocumentPath,
   );
@@ -318,20 +331,17 @@ export function getLength(textDocument: string): {
   lengthInSheet: number;
 } {
   let docContent = textDocument;
-  // カウントに含めない文字を削除する
   docContent = docContent
-    .replace(/[ \t\r\f\v]/g, "") // 改行以外の空白文字
-    .replace(/《(.+?)》/g, "") // ルビ範囲指定記号とその中の文字
-    .replace(/[|｜]/g, "") // ルビ開始記号
-    // .replace(/<!--(.+?)-->/, ""); 
-    .replace(/<!--[\s\S]*?-->\n*/g, ''); // コメントアウト
+    .replace(/[ \t\r\f\v]/g, "")
+    .replace(/《(.+?)》/g, "")
+    .replace(/[|｜]/g, "")
+    .replace(/<!--[\s\S]*?-->\n*/g, "");
   let characterCount = 0;
   let sheetCount = 0;
   if (docContent !== "") {
     characterCount = docContent.replace(/\s/g, "").length;
     const paragraphs = docContent.split(/\r\n|\r|\n/);
 
-    // 各段落の行数を計算して合算
     let lineCount = 0;
     const lineLength = 20;
     for (const [index, paragraph] of paragraphs.entries()) {
@@ -342,9 +352,7 @@ export function getLength(textDocument: string): {
         lineCount += Math.ceil(paragraphLength / lineLength);
       }
     }
-    // 行数から原稿用紙の枚数を計算 (1枚あたり20行)
     sheetCount = lineCount / 20;
-    // console.log("段落数", paragraphs.length, sheetCount);
   }
   return { lengthInNumber: characterCount, lengthInSheet: sheetCount };
 }
@@ -381,13 +389,11 @@ export function cleanUpFolderStates(
     {},
   );
 
-  // 現在のフォルダーIDに存在しないデータを削除
   for (const id in folderStates) {
     if (!currentFolderIds.includes(id)) {
       delete folderStates[id];
     }
   }
 
-  // 更新された状態を再保存
   context.workspaceState.update("folderStates", folderStates);
 }

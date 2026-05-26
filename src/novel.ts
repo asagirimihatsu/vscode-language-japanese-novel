@@ -1,29 +1,20 @@
 import * as vscode from "vscode";
-import * as path from "path";
+import * as path from "node:path";
 import {
-  draftRoot,
+  manuscriptRoot,
   draftsObject,
   resetCounter,
   updateFolderCache,
   writeFolderStates,
-} from "./compile";
-import {
-  getDraftWebViewProviderInstance,
-  isFileSelectedOnTree,
-} from "./extension";
-import { v4 as uuidv4 } from "uuid";
-import { getConfig } from "./config";
-
-let debugIncrement = 0;
+} from "./compile.js";
+import { getDraftWebViewProviderInstance } from "./extension.js";
+import { randomUUID } from "node:crypto";
+import { getConfig } from "./config.js";
 
 let isFileOperating = false;
 let ignorEditorChanges = false;
 const debugWebView = false;
 const configuration = vscode.workspace.getConfiguration();
-const draftFileType = getConfig().draftFileType;
-  // configuration.get("Novel.general.filetype") == ".txt" ? ".txt" : ".md";
-
-const output = vscode.window.createOutputChannel("Novel");
 
 type FileNode = {
   id: string;
@@ -61,11 +52,6 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
           "Novel.general.filetype 設定が変更されました",
         );
 
-        // 変更後の新しい設定値を取得
-        const newFileType = vscode.workspace
-          .getConfiguration("Novel.general")
-          .get<string>("filetype");
-        // console.log(`新しいファイルタイプ: ${newFileType}`);
       } else if (e.affectsConfiguration("Novel.DraftTree.renumber")) {
         // ドラッグ&ドロップの設定が変更された場合の処理
         const configuration = vscode.workspace.getConfiguration();
@@ -131,12 +117,8 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
       switch (message.command) {
         // ツリーデータの要求
         case "loadTreeData":
-          // console.log(`${debugIncrement} loadTreeDataの要求`);
-          // MARK: loadTreeDataの要求
-          // console.time("loadTreeDataTime");
-          this.loadTreeData(webviewView.webview);
-          // console.timeEnd("loadTreeDataTime");
-          this.sendIsOrdable(webviewView.webview);
+          await this.loadTreeData(webviewView.webview);
+          await this.sendIsOrdable(webviewView.webview);
           break;
 
         // ファイルを開く
@@ -189,8 +171,8 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
 
         case "moveFileUp":
           console.log("moveFileUp", message.fileData);
-          console.log(draftsObject(draftRoot(), this._context));
-          this.swapFileUpDown(
+          console.log(await draftsObject(await manuscriptRoot(), this._context));
+          await this.swapFileUpDown(
             message.fileData.destinationPath,
             "up",
             this._context,
@@ -199,7 +181,7 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
 
         case "moveFileDown":
           console.log("moveFileDown", message.fileData);
-          this.swapFileUpDown(
+          await this.swapFileUpDown(
             message.fileData.destinationPath,
             "down",
             this._context,
@@ -270,21 +252,20 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
     </html>`;
   }
 
-  public loadTreeData(webview: vscode.Webview) {
+  public async loadTreeData(webview: vscode.Webview): Promise<void> {
     resetCounter();
-    // console.time("loadTreeDataTime");
     const configuration = getConfig();
     const draftFileType = configuration.draftFileType;
     const countOfNumber = configuration.displayCountOfNumber;
     const countOfSheet = configuration.displayCountOfSheet;
+    const data = await draftsObject(await manuscriptRoot(), this._context);
     webview.postMessage({
       command: "treeData",
-      data: draftsObject(draftRoot(), this._context),
+      data,
       displayNumber: countOfNumber,
       displaySheet: countOfSheet,
       draftFileType: draftFileType,
     });
-    // console.timeEnd("loadTreeDataTime");
   }
 
   private async sendIsOrdable(webview: vscode.Webview) {
@@ -298,7 +279,7 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
 
   private refreshWebview() {
     if (this._webviewView && !isFileOperating) {
-      this.loadTreeData(this._webviewView.webview);
+      void this.loadTreeData(this._webviewView.webview);
     }
   }
 
@@ -322,7 +303,7 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
     direction: "up" | "down",
     context: vscode.ExtensionContext,
   ) {
-    const fileTree = draftsObject(draftRoot(), context);
+    const fileTree = await draftsObject(await manuscriptRoot(), context);
     writeFolderStates(context, fileTree);
     const draftFileType = getConfig().draftFileType;
 
@@ -447,7 +428,7 @@ export class DraftWebViewProvider implements vscode.WebviewViewProvider {
         ignorEditorChanges = true;
       }
       // 一時ファイル名（衝突を避けるため）を生成して、対象ファイルを一旦リネーム
-      const tempFileName = `temp-${uuidv4()}-${currentFileOldName}`;
+      const tempFileName = `temp-${randomUUID()}-${currentFileOldName}`;
       const tempFileUri = vscode.Uri.joinPath(parentUri, tempFileName);
 
       // リネーム操作
@@ -555,7 +536,7 @@ async function moveAndReorderFiles(
     await closeFileInEditor(movingFileUri);
 
     // 移動用のUUIDを作成
-    const uniqueId = uuidv4();
+    const uniqueId = randomUUID();
 
     const fileName = path.basename(movingFileDir);
     const fileIndex =
@@ -632,7 +613,7 @@ async function moveAndReorderFiles(
     isFileOperating = false;
     // ツリービューの更新
     const draftWebViewProvider = getDraftWebViewProviderInstance();
-    draftWebViewProvider.loadTreeData(
+    await draftWebViewProvider.loadTreeData(
       draftWebViewProvider._webviewView!.webview,
     );
     draftWebViewProvider.highlightFile(
@@ -818,7 +799,7 @@ async function renameFile(targetPath: string, newName: string) {
     );
   }
   const draftWebViewProvider = getDraftWebViewProviderInstance();
-  draftWebViewProvider.loadTreeData(draftWebViewProvider._webviewView!.webview);
+  await draftWebViewProvider.loadTreeData(draftWebViewProvider._webviewView!.webview);
 }
 
 // MARK: ファイル挿入
@@ -899,7 +880,7 @@ async function insertFile(
         vscode.Uri.joinPath(destinationUpperUri, file[0]).fsPath === targetPath,
     );
     // 移動用のUUIDを作成
-    const uniqueId = uuidv4();
+    const uniqueId = randomUUID();
     const fileIndex = destinationIndex + 2;
     const digits = (destinationFiles.length + 1).toString().length;
     const insertingUidNodeName = `moving-${uniqueId}-${String(
@@ -956,7 +937,7 @@ async function insertFile(
       destinationFiles,
       destinationIndex,
       "after",
-      vscode.Uri.file(draftRoot()),
+      vscode.Uri.file(await manuscriptRoot()),
       uniqueId,
     );
 
