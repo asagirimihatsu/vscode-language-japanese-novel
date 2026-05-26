@@ -131,20 +131,6 @@ export async function activate(
     vscode.commands.registerCommand("Novel.add-sesami", addSesami),
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "Novel.word-transpose-forward",
-      moveWordForward,
-    ),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "Novel.word-transpose-backward",
-      moveWordBackward,
-    ),
-  );
-
   // MARK: 原稿ツリー
   draftWebViewProviderInstance = new DraftWebViewProvider(context);
 

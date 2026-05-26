@@ -101,11 +101,6 @@ novel-writerは、日本語の小説で使われる連体形文末辞（〜し�
 
 ![文末辞の切り替え](https://github.com/ttrace/vscode-language-japanese-novel/raw/main/resource/tense-aspect-change.gif)
 
-### 文節の前後移動
-
-novel-writerは、選択範囲やカーソルのある文節を前後に移動させる機能を持っています。標準のキーボードショートカットは、MacではCommand+Option+←→、WindowsやLinuxではCtrl+Alt+←→を割り当てています。この機能はNovel以外のテキストでも有効です。
-![文節の前後移動](https://github.com/ttrace/vscode-language-japanese-novel/raw/main/resource/word-transpose.gif)
-
 ### テキスト結合
 
 ワークスペース中のテキストファイルを結合し、publishフォルダーの中にプロジェクトのフォルダー名のファイルを作ります。

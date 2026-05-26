@@ -1,5 +1,5 @@
 {
-  "name": "novel-writer",
+  "name": "mihatsu-novel-writer",
   "version": "3.4.19",
   "publisher": "TaiyoFujii",
   "repository": {
@@ -78,14 +78,6 @@
         "title": "Novel:圏点挿入"
       },
       {
-        "command": "Novel.word-transpose-forward",
-        "title": "Novel:文節を後ろに"
-      },
-      {
-        "command": "Novel.word-transpose-backward",
-        "title": "Novel:文節を前に"
-      },
-      {
         "command": "Novel.launch-preview-server",
         "title": "Novel:プレビューサーバー起動"
       },
@@ -161,18 +153,6 @@
         "command": "Novel.add-ruby",
         "key": "ctrl+r",
         "mac": "cmd+r",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "Novel.word-transpose-forward",
-        "key": "ctrl+alt+right",
-        "mac": "cmd+right",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "Novel.word-transpose-backward",
-        "key": "ctrl+alt+left",
-        "mac": "cmd+left",
         "when": "editorTextFocus"
       }
     ],
@@ -824,6 +804,7 @@
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
+    "@vscode/vsce": "^3.9.1",
     "bufferutil": "^4.1.0",
     "css-loader": "^7.1.3",
     "eslint": "^9.39.2",
