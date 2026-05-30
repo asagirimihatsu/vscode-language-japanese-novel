@@ -187,7 +187,7 @@ const TreeView: React.FC<TreeViewProps> = React.memo(({
   useEffect(() => {
     if (isInserting == true) {
       if (isOrdable) {
-        setInsertingValue(insertingNode == "file" ? "charpter" : "volume");
+        setInsertingValue(insertingNode == "file" ? "chapter" : "volume");
       } else {
         const match = node.name.match(/^\d+/);
         if (match != null) {
@@ -197,8 +197,8 @@ const TreeView: React.FC<TreeViewProps> = React.memo(({
             "0",
           );
 
-          setInsertingValue(insertingNode == "file"
-              ? `${fileNumber}-charpter${draftFileType}`
+          setInsertingValue(insertingNode === "file"
+              ? `${fileNumber}-chapter${draftFileType}`
               : `${fileNumber}-volume`);
         }
       }
