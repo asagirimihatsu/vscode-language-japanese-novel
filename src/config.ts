@@ -43,11 +43,11 @@ export function getConfig(): NovelSettings {
   const pageStarting = config.get<string>("pdf.pageStarting", "左");
   const originPageNumber = config.get<number>("pdf.originPageNumber", 1);
   const numberFormatR = config.get<string>(
-    "preview.numberFormatR",
+    "pdf.numberFormatR",
     "${projectTitle} ${typesettingInformation} ${pageNumber}"
   );
   const numberFormatL = config.get<string>(
-    "preview.numberFormatL",
+    "pdf.numberFormatL",
     "${pageNumber} ${projectTitle} ${typesettingInformation}"
   );
   const userRegex = config.get<Array<[string, string]>>(

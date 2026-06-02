@@ -178,12 +178,6 @@ async function launchVivlioStylePreviewOnPanel(
   }
 }
 
-// メッセージ送信ロジックを関数化
-interface PanelMessage {
-  command: string;
-  content: string;
-}
-
 let selectionChangeDisposable: vscode.Disposable | undefined;
 
 async function sendMessageToPanel(
@@ -354,6 +348,15 @@ async function sendMessageToPanel(
   }
 }
 
+function renderTemplate(template: string, data: Record<string, string | number | boolean | bigint>): string {
+  return template.replace(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/g, (_, key) => {
+    if (!Object.prototype.hasOwnProperty.call(data, key)) {
+      return `$\{${key}\}`;
+    }
+    return String(data[key]);
+  });
+}
+
 async function getPrintContent(): Promise<string> {
   //configuration 読み込み
 
@@ -398,14 +401,17 @@ async function getPrintContent(): Promise<string> {
       : "";
   const columnHeitghtRate =
     "calc(" + fontSize * previewSettings.lineLength + "mm + 0.5em)";
+  const typesettingInformation = `${previewSettings.lineLength}字×${linesPerPage}行`;
 
-  const pageNumberFormatR = eval(
-    "`" +
-      previewSettings.numberFormatR
-        .replace(/\${pageNumber}/, "counter(page)")
-        .replace(/(.*)counter\(page\)(.*)/, '"$1"counter(page)"$2"') +
-      ";`",
-  );
+  // "${projectTitle} ${typesettingInformation} ${pageNumber}"
+  const pageNumberFormatR = renderTemplate(
+    previewSettings.numberFormatR,
+    {
+      projectTitle,
+      typesettingInformation,
+      pageNumber: "counter(page)",
+    },
+  ).replace(/(.*)counter\(page\)(.*)/, '"$1"counter(page)"$2";');
 
   let printCss = `<style>
       @charset "UTF-8";
